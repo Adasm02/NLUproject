@@ -1,0 +1,181 @@
+from typing import Optional
+import torch
+from torch import optim
+from functions import *  # include create_language_model, train_model, evaluate_model
+from utils import batch_collate_fn, load_datasets, store_model_with_params_and_lr
+
+from functools import partial
+from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import copy
+import argparse
+import numpy as np
+import math
+
+# ========== ASGD Custom Optimizer ==========
+class ASGD(torch.optim.SGD):
+    def __init__(
+        self, params, lr: float = 1.0, t0: int = 1, momentum: float = 0,
+        dampening: float = 0, weight_decay: float = 0, nesterov=False,
+        *, maximize: bool = False, foreach: Optional[bool] = None,
+        differentiable: bool = False, fused: Optional[bool] = None):
+
+        super(ASGD, self).__init__(
+            params, lr, momentum, dampening, weight_decay, nesterov,
+            maximize=maximize, foreach=foreach, differentiable=differentiable, fused=fused)
+
+        self.t0 = t0
+        self.t = 0
+        self.ax = {}
+        self.mu = 1
+        self.last_params = {}
+
+    def step(self, closure=None):
+        super(ASGD, self).step(closure)
+
+        with torch.no_grad():
+            self.t += 1
+            if self.t >= self.t0:
+                for parameter in self.param_groups[0]['params']:
+                    if parameter not in self.ax:
+                        self.ax[parameter] = parameter.data.clone()
+                    else:
+                        self.ax[parameter] += (parameter.data - self.ax[parameter]) / self.mu
+                self.mu += 1
+
+    def average(self):
+        if self.t < self.t0:
+            return
+        for parameter in self.param_groups[0]['params']:
+            self.last_params[parameter] = parameter.data.clone()
+            parameter.data = self.ax[parameter].clone()
+
+    def revert(self):
+        if self.t < self.t0:
+            return
+        for parameter in self.param_groups[0]['params']:
+            parameter.data = self.last_params[parameter].clone()
+
+# ========== Device selection ==========
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+if device == 'cuda':
+    torch.cuda.empty_cache()
+
+# ========== Configurable Parameters ==========
+params = {
+    'emb_size': 800,
+    'hid_size': 800,
+    'lr': 5,
+    'lr_decay': 0.75,
+    'lr_decay_epoch': 5,
+    'NMT-ASGD': True,
+    'threshold': 3,
+    'clip': 5,
+    'emb_dropout': 0.5,
+    'out_dropout': 0.5,
+    'n_epochs': 50,
+    'patience': 5,
+    'batch_size': 16,
+    'weight_tying': True,
+    'drop_out_mode': 'variational',
+    'optimizer_type': 'SGD',
+    'exp_name': 'expLSTM',
+    'mode': 'train'
+}
+globals().update(params)
+emb_size = params['emb_size']
+hid_size = params['hid_size']
+lr = params['lr']
+lr_decay = params['lr_decay']
+lr_decay_epoch = params['lr_decay_epoch']
+asgd= params['NMT-ASGD']
+threshold = params['threshold']
+clip = params['clip']
+emb_dropout = params['emb_dropout']
+out_dropout = params['out_dropout']
+n_epochs = params['n_epochs']
+patience = params['patience']
+batch_size = params['batch_size']
+weight_tying = params['weight_tying']
+drop_out_mode = params['drop_out_mode']
+opt_type = params['optimizer_type']
+exp_name = params['exp_name']
+mode = params['mode']
+if __name__ == "__main__":
+    print("Running Part B")
+
+    if mode == 'test':
+        _, _, test_dataset, lang = load_datasets()
+        test_loader = DataLoader(test_dataset, batch_size=32, collate_fn=partial(batch_collate_fn, padding_token=lang.word_to_id["<pad>"], device=device))
+        model, criterion_eval = load_checkpoint(emb_size, hid_size, lr, clip, device, emb_dropout, out_dropout, lang, opt_type, exp_name)
+        final_ppl, _ = evaluate_model(test_loader, criterion_eval, model)
+        print('Test PPL:', final_ppl)
+    else:
+        train_dataset, dev_dataset, test_dataset, lang = load_datasets()
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=partial(batch_collate_fn, padding_token=lang.word_to_id["<pad>"], device=device))
+        dev_loader = DataLoader(dev_dataset, batch_size=32, collate_fn=partial(batch_collate_fn, padding_token=lang.word_to_id["<pad>"], device=device))
+        test_loader = DataLoader(test_dataset, batch_size=32, collate_fn=partial(batch_collate_fn, padding_token=lang.word_to_id["<pad>"], device=device))
+
+        model, optimizer, scheduler, criterion_train, criterion_eval = create_language_model(
+            emb_size, hid_size, lr, lr_decay_epoch, lr_decay, clip, device, emb_dropout, out_dropout, lang, opt_type, weight_tying, drop_out_mode
+        )
+
+        best_ppl = math.inf
+        best_model = None
+        patience_counter = patience
+        losses_train, losses_dev, sampled_epochs, ppl_dev_list = [], [], [], []
+        best_dev_loss = []
+        non_monotonic_trigger = threshold
+        compute_avg = False
+        pbar = tqdm(range(1, n_epochs + 1))
+
+        for epoch in pbar:
+            loss = train_model(train_loader, optimizer, criterion_train, model, clip)
+            losses_train.append(np.mean(loss))
+            sampled_epochs.append(epoch)
+            scheduler.step()
+
+            if asgd:
+                if compute_avg:
+                    optimizer.average()
+                    ppl_dev, loss_dev = evaluate_model(dev_loader, criterion_eval, model)
+                    optimizer.revert()
+                    print(f"[Epoch {epoch}] Evaluated with averaged parameters.")
+                else:
+                    ppl_dev, loss_dev = evaluate_model(dev_loader, criterion_eval, model)
+
+                    if len(best_dev_loss) > non_monotonic_trigger and loss_dev > min(best_dev_loss[:-non_monotonic_trigger]):
+                        print(f"\nSwitching optimizer to ASGD at epoch {epoch}")
+                        patience_counter = patience
+                        compute_avg = True
+                        lr_decay_epoch = 3
+                        lr_decay = 0.5
+                        optimizer = ASGD(model.parameters(), lr=lr, t0=0)
+                        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, lr_decay_epoch, gamma=lr_decay)
+                best_dev_loss.append(loss_dev)
+            else:
+                ppl_dev, loss_dev = evaluate_model(dev_loader, criterion_eval, model)
+
+            ppl_dev_list.append(ppl_dev)
+            losses_dev.append(np.mean(loss_dev))
+
+            pbar.set_description("PPL: %f" % ppl_dev)
+            if ppl_dev < best_ppl:
+                best_ppl = ppl_dev
+                best_model = copy.deepcopy(model).to('cpu')
+                patience_counter = patience
+            else:
+                patience_counter -= 1
+
+            if patience_counter <= 0:
+                break
+
+        # Final evaluation
+        best_model.to(device)
+        final_ppl, _ = evaluate_model(test_loader, criterion_eval, best_model)
+        print('Test PPL:', final_ppl)
+        store_model_with_params_and_lr(best_model, optimizer, epoch, exp_name, params, final_ppl)
+        plot_losses(losses_train, losses_dev, sampled_epochs, exp_name, save=True)
+        plot_ppl(ppl_dev_list, sampled_epochs, exp_name, save=True)
+

@@ -1,0 +1,13 @@
+=== Training Parameters ===
+hid_size: 768
+lr: 5e-05
+clip: 5
+n_epochs: 20
+patience: 5
+batch_size: 32
+dropout: 0.1
+portion: 0.1
+
+=== Results ===
+Slot F1: 0.935 ± 0.033
+Intent Accuracy: 0.963 ± 0.026

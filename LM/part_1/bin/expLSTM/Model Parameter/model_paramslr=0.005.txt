@@ -1,0 +1,14 @@
+Model parameters:
+emb_size: 800
+hid_size: 800
+lr: 0.005
+clip: 5
+emb_dropout: 0.2
+out_dropout: 0.2
+n_epochs: 10
+patience: 3
+batch_size: 64
+optimizer_type: ADAMW
+exp_name: expLSTM
+mode: train
+PPL on test: 143.2927931229558

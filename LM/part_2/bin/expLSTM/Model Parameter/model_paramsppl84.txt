@@ -1,0 +1,20 @@
+Model parameters:
+emb_size: 800
+hid_size: 800
+lr: 5
+lr_decay: 0.75
+lr_decay_epoch: 5
+NMT-ASGD: True
+threshold: 3
+clip: 5
+emb_dropout: 0.5
+out_dropout: 0.5
+n_epochs: 50
+patience: 10
+batch_size: 16
+weight_tying: True
+drop_out_mode: variational
+optimizer_type: SGD
+exp_name: expLSTM
+mode: train
+PPL on test: 84.68852342721446
