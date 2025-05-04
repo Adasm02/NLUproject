@@ -24,36 +24,7 @@ This project aims to introduce the main tasks of the Natural Language Understand
    - Initially with LSTM
    - Then done using BERT
 
-Each folder contains a report detailing the tasks.
-
-## Project structure
-basic_nlu_tasks
-├── LM
-├── dataset
-│ ├── part_1
-│ │ ├── functions.py
-│ │ ├── main.py
-│ │ ├── model.py
-│ │ └── utils.py
-│ └── part_2
-│ │ ├── functions.py
-│ │ ├── main.py
-│ │ ├── model.py
-│ │ └── utils.py
-├── NLU
-│── dataset
-│ ├── part_1
-│ │ ├── functions.py
-│ │ ├── main.py
-│ │ ├── model.py
-│ │ └── utils.py
-│ └── part_2
-│ │ ├── functions.py
-│ │ ├── main.py
-│ │ ├── model.py
-│ │ └── utils.py
-├── README.md
-└── part_1
+Consult the relative report for more detail about each task.
 
 - **LM**: Language models
 - **NLU**: Slot filling and intent recognition
