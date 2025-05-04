@@ -12,9 +12,6 @@
 ----------
 
 - [Project Description](#project-description)
-- [Project structure](#project-structure)
-
-
 
 ## Project Description
 This project aims to introduce the main tasks of the Natural Language Understanding (NLU) field.
